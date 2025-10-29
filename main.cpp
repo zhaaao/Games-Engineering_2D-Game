@@ -395,6 +395,13 @@ public:
     float getY() const { return y; }
     int getW() const { return sheet ? sheet->getFrameW() : 0; }
     int getH() const { return sheet ? sheet->getFrameH() : 0; }
+    void clampPosition(float minX, float minY, float maxX, float maxY)
+    {
+        if (x < minX) x = minX;
+        if (y < minY) y = minY;
+        if (x > maxX) x = maxX;
+        if (y > maxY) y = maxY;
+    }
 
     // 处理输入与更新动画
     void update(Window& input, float dt)
@@ -486,6 +493,12 @@ int main()
         // --- 玩家更新（移动 + 动画）---
         hero.update(canvas, dt);
 
+        // --- 边界限制：保证角色不离开地图 ---
+        float maxHeroX = (float)map.getPixelWidth() - hero.getW();
+        float maxHeroY = (float)map.getPixelHeight() - hero.getH();
+        if (maxHeroX < 0) maxHeroX = 0;
+        if (maxHeroY < 0) maxHeroY = 0;
+        hero.clampPosition(0.0f, 0.0f, maxHeroX, maxHeroY);
         // --- 计算相机：始终把玩家放在屏幕中央（可偏移半帧使观感更居中）---
         camX = hero.getX() - (canvas.getWidth() * 0.5f) + hero.getW() * 0.5f;
         camY = hero.getY() - (canvas.getHeight() * 0.5f) + hero.getH() * 0.5f;
