@@ -103,9 +103,39 @@
     <ClInclude Include="GamesEngineeringBase.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="gfx_utils.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="blit.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="TileMap.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="SpriteSheet.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Animator.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Player.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="NPC.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="NPCSystem.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="gfx_utils.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="blit.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>

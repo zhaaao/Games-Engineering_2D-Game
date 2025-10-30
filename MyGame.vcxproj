@@ -154,9 +154,23 @@
     <Text Include="Resources\tiles.txt" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Animator.h" />
+    <ClInclude Include="blit.h" />
     <ClInclude Include="GamesEngineeringBase.h" />
+    <ClInclude Include="gfx_utils.h" />
+    <ClInclude Include="NPC.h" />
+    <ClInclude Include="NPCSystem.h" />
+    <ClInclude Include="Player.h" />
+    <ClInclude Include="SpriteSheet.h" />
+    <ClInclude Include="TileMap.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="blit.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
+    <ClCompile Include="gfx_utils.cpp" />
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
