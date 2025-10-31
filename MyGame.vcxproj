@@ -160,6 +160,7 @@
     <ClInclude Include="gfx_utils.h" />
     <ClInclude Include="NPC.h" />
     <ClInclude Include="NPCSystem.h" />
+    <ClInclude Include="PickupSystem.h" />
     <ClInclude Include="Player.h" />
     <ClInclude Include="SpriteSheet.h" />
     <ClInclude Include="TileMap.h" />
@@ -172,6 +173,7 @@
     </ClCompile>
     <ClCompile Include="gfx_utils.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="NPCSystem.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

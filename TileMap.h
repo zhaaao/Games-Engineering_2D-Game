@@ -3,6 +3,8 @@
 #include "gfx_utils.h"
 #include "blit.h"
 #include <string>
+#include <fstream>
+#include <sstream>
 using namespace GamesEngineeringBase;
 using namespace std;
 

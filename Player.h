@@ -3,7 +3,10 @@
 #include "TileMap.h"
 #include "SpriteSheet.h"
 #include "Animator.h"
+#include "NPCSystem.h"
 using namespace GamesEngineeringBase;
+
+
 /******************************  玩家（Hero）类  *********************************
   - 维护世界坐标（float）
   - 处理 WASD 移动（对角归一，速度统一）
@@ -30,6 +33,13 @@ private:
     float kx = 0.f, ky = 0.f;
     float kTime = 0.f;
     float hitCooldown = 0.f;
+    // —— 英雄武器冷却（线性自动射击最近NPC）——
+    float shootCD = 0.0f;         // 射击冷却计时（秒）
+    float shootInterval = 0.35f;  // 射速（秒/发），可被道具加成
+    float aoeCD = 0.0f;          // AOE 当前冷却（秒）
+    float aoeInterval = 1.0f;    // AOE 冷却时间（秒，作业要求“长冷却”）
+    int   aoeN = 3;              // 一次命中的目标个数（按 HP 从高到低挑选）
+    int   aoeDamage = 2;         // 每个目标承受的伤害
     // 如果没有的话，提供帧尺寸访问
     int getFrameW() const { return sheet ? sheet->getFrameW() : 32; }
     int getFrameH() const { return sheet ? sheet->getFrameH() : 32; }
@@ -72,6 +82,12 @@ public:
     float getY() const { return y; }
     int getW() const { return sheet ? sheet->getFrameW() : 0; }
     int getH() const { return sheet ? sheet->getFrameH() : 0; }
+    // === 新增：给增益系统用的接口 ===
+    float getShootInterval() const { return shootInterval; }
+    void  setShootInterval(float v) { if (v > 0.f) shootInterval = v; }
+    int   getAOEN() const { return aoeN; }
+    float getAOEInterval() const { return aoeInterval; }
+
     void clampPosition(float minX, float minY, float maxX, float maxY)
     {
         if (x < minX) x = minX;
@@ -227,5 +243,54 @@ public:
         ky = dirY * power;
         kTime = duration;
         hitCooldown = 0.10f;                        // 100ms：避免同一帧多次触发
+    }
+
+    // —— 每帧：自动攻击（找最近NPC并请求 NPCSystem 生成子弹）——
+    // 说明：不改你原有 update() 签名，攻击独立在此处调用
+    void updateAttack(float dt, class NPCSystem& npcs)
+    {
+        // 冷却计时
+        if (shootCD > 0.f) { shootCD -= dt; return; }
+
+        // 取得最近 NPC 的“中心点”；若没有目标，直接返回
+        float tx, ty;
+        if (!npcs.findNearestAlive(x, y, tx, ty)) return;
+
+        // 以“英雄中心”朝目标中心发射
+        float sx = getHitboxX() + getHitboxW() * 0.5f;
+        float sy = getHitboxY() + getHitboxH() * 0.5f;
+        float dx = tx - sx, dy = ty - sy;
+        float len = std::sqrt(dx * dx + dy * dy);
+        if (len < 1e-5f) return;
+        dx /= len; dy /= len;
+
+        // 请求 NPCSystem 生成“英雄子弹”
+        // 速度可调（px/s），寿命 ttl（秒），这里给 420 px/s，存活 1.2 s
+        npcs.spawnHeroBullet(sx, sy, dx, dy, 420.f, 1.2f);
+
+        // 重置冷却
+        shootCD = shootInterval;
+    }
+
+    void setAOEParams(int N, int dmg, float interval) {
+        if (N > 0) aoeN = N;
+        if (dmg > 0) aoeDamage = dmg;
+        if (interval > 0.f) aoeInterval = interval;
+    }
+
+    void updateAOE(float dt, NPCSystem& npcs, Window& input)
+    {
+        if (aoeCD > 0.f) aoeCD -= dt;
+
+        if (aoeCD <= 0.f && input.keyPressed('J')) {  // ✅ 按 J 触发
+            // 英雄中心
+            float cx = getHitboxX() + getHitboxW() * 0.5f;
+            float cy = getHitboxY() + getHitboxH() * 0.5f;
+
+            // 对“HP 最高的前 N 个”发射紫色 AOE 子弹
+            npcs.aoeStrikeTopN(aoeN, aoeDamage, cx, cy);
+
+            aoeCD = aoeInterval; // 重置长冷却
+        }
     }
 };

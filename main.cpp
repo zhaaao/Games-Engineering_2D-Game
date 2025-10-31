@@ -11,6 +11,8 @@
 #include "Animator.h"
 #include "Player.h" 
 #include "NPCSystem.h"
+#include "PickupSystem.h"
+
 using namespace GamesEngineeringBase;
 using namespace std;
 
@@ -33,8 +35,174 @@ static void idToColor(int id, unsigned char& r, unsigned char& g, unsigned char&
     }
 }
 
+// ====== 简易像素/HUD工具（5x7字库；仅含需要的字符） ======
+static inline void putPix(GamesEngineeringBase::Window& w, int x, int y,
+    unsigned char r, unsigned char g, unsigned char b)
+{
+    const int W = (int)w.getWidth(), H = (int)w.getHeight();
+    if ((unsigned)x >= (unsigned)W || (unsigned)y >= (unsigned)H) return;
+    w.draw(y * W + x, r, g, b);
+}
 
+static void fillRectUI(GamesEngineeringBase::Window& w, int x0, int y0, int wdt, int hgt,
+    unsigned char r, unsigned char g, unsigned char b)
+{
+    const int W = (int)w.getWidth(), H = (int)w.getHeight();
+    int x1 = x0 + wdt, y1 = y0 + hgt;
+    if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0;
+    if (x1 > W) x1 = W; if (y1 > H) y1 = H;
+    if (x0 >= x1 || y0 >= y1) return;
+    for (int y = y0; y < y1; ++y) {
+        int base = y * W;
+        for (int x = x0; x < x1; ++x) {
+            w.draw(base + x, r, g, b);
+        }
+    }
+}
 
+// --- 5x7 字形：每个字形 7 行，每行低 5 位为像素（1=点亮）
+struct Glyph5x7 { unsigned char row[7]; };
+
+static const Glyph5x7* getGlyph5x7(char c)
+{
+    // 数字 0-9
+    static const Glyph5x7 G0 = { {0x1E,0x11,0x13,0x15,0x19,0x11,0x1E} }; // 0
+    static const Glyph5x7 G1 = { {0x04,0x0C,0x14,0x04,0x04,0x04,0x1F} }; // 1
+    static const Glyph5x7 G2 = { {0x1E,0x01,0x01,0x1E,0x10,0x10,0x1F} }; // 2
+    static const Glyph5x7 G3 = { {0x1E,0x01,0x01,0x0E,0x01,0x01,0x1E} }; // 3
+    static const Glyph5x7 G4 = { {0x02,0x06,0x0A,0x12,0x1F,0x02,0x02} }; // 4
+    static const Glyph5x7 G5 = { {0x1F,0x10,0x10,0x1E,0x01,0x01,0x1E} }; // 5
+    static const Glyph5x7 G6 = { {0x0E,0x10,0x10,0x1E,0x11,0x11,0x1E} }; // 6
+    static const Glyph5x7 G7 = { {0x1F,0x01,0x02,0x04,0x08,0x08,0x08} }; // 7
+    static const Glyph5x7 G8 = { {0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E} }; // 8
+    static const Glyph5x7 G9 = { {0x1E,0x11,0x11,0x1E,0x01,0x01,0x0E} }; // 9
+
+    // 大写：T I M E F P S K L O R
+    static const Glyph5x7 GT = { {0x1F,0x04,0x04,0x04,0x04,0x04,0x04} };
+    static const Glyph5x7 GI = { {0x1F,0x04,0x04,0x04,0x04,0x04,0x1F} };
+    static const Glyph5x7 GM = { {0x11,0x1B,0x15,0x11,0x11,0x11,0x11} };
+    static const Glyph5x7 GE = { {0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F} };
+    static const Glyph5x7 GF = { {0x1F,0x10,0x10,0x1E,0x10,0x10,0x10} };
+    static const Glyph5x7 GP = { {0x1E,0x11,0x11,0x1E,0x10,0x10,0x10} };
+    static const Glyph5x7 GS = { {0x0F,0x10,0x10,0x1E,0x01,0x01,0x1E} };
+    static const Glyph5x7 GK = { {0x11,0x12,0x14,0x18,0x14,0x12,0x11} };
+    static const Glyph5x7 GL = { {0x10,0x10,0x10,0x10,0x10,0x10,0x1F} };
+    static const Glyph5x7 GO = { {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E} };
+    static const Glyph5x7 GR = { {0x1E,0x11,0x11,0x1E,0x14,0x12,0x11} };
+
+    // 标点：冒号 :
+    static const Glyph5x7 GCOL = { {0x00,0x04,0x00,0x00,0x00,0x04,0x00} };
+
+    if (c >= '0' && c <= '9') {
+        static const Glyph5x7* DIG[10] = { &G0,&G1,&G2,&G3,&G4,&G5,&G6,&G7,&G8,&G9 };
+        return DIG[c - '0'];
+    }
+    switch (c) {
+    case 'T': return &GT; case 'I': return &GI; case 'M': return &GM; case 'E': return &GE;
+    case 'F': return &GF; case 'P': return &GP; case 'S': return &GS;
+    case 'K': return &GK; case 'L': return &GL; case 'O': return &GO; case 'R': return &GR;
+    case ':': return &GCOL;
+    }
+    return nullptr;
+}
+
+static void drawChar5x7(GamesEngineeringBase::Window& w, int x, int y,
+    char c, unsigned char r, unsigned char g, unsigned char b, int scale = 2)
+{
+    const Glyph5x7* gph = getGlyph5x7(c);
+    if (!gph) return;
+    for (int ry = 0; ry < 7; ++ry) {
+        unsigned char mask = gph->row[ry];
+        for (int rx = 0; rx < 5; ++rx) {
+            if (mask & (1 << (4 - rx))) {
+                // 放大绘制
+                for (int yy = 0; yy < scale; ++yy)
+                    for (int xx = 0; xx < scale; ++xx)
+                        putPix(w, x + rx * scale + xx, y + ry * scale + yy, r, g, b);
+            }
+        }
+    }
+}
+
+static void drawText5x7(GamesEngineeringBase::Window& w, int x, int y,
+    const char* s, unsigned char r, unsigned char g, unsigned char b, int scale = 2, int spacing = 1)
+{
+    int cx = x;
+    for (int i = 0; s[i]; ++i) {
+        drawChar5x7(w, cx, y, s[i], r, g, b, scale);
+        cx += 5 * scale + spacing;
+    }
+}
+
+static void drawNumber(GamesEngineeringBase::Window& w, int x, int y, int v,
+    unsigned char r, unsigned char g, unsigned char b, int scale = 2)
+{
+    // 简单非 STL：把数字拆成逆序，再倒着画
+    if (v == 0) { drawChar5x7(w, x, y, '0', r, g, b, scale); return; }
+    int buf[12]; int n = 0;
+    int t = (v < 0 ? -v : v);
+    while (t > 0 && n < 12) { buf[n++] = t % 10; t /= 10; }
+    if (v < 0) { drawChar5x7(w, x, y, '-', r, g, b, scale); x += 5 * scale + 1; }
+    for (int i = n - 1; i >= 0; --i) {
+        drawChar5x7(w, x, y, (char)('0' + buf[i]), r, g, b, scale);
+        x += 5 * scale + 1;
+    }
+}
+
+// 半透明感的棋盘点阵（伪透明）：每隔一个像素画一个点
+static void fillRectStipple(GamesEngineeringBase::Window& w, int x0, int y0, int wdt, int hgt,
+    unsigned char r, unsigned char g, unsigned char b, int pattern = 0)
+{
+    const int W = (int)w.getWidth(), H = (int)w.getHeight();
+    int x1 = x0 + wdt, y1 = y0 + hgt;
+    if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0;
+    if (x1 > W) x1 = W; if (y1 > H) y1 = H;
+    if (x0 >= x1 || y0 >= y1) return;
+
+    for (int y = y0; y < y1; ++y) {
+        int base = y * W;
+        for (int x = x0; x < x1; ++x) {
+            // pattern 0: (x+y) 偶数点；pattern 1: 2x2 更稀疏
+            bool paint = (pattern == 0) ? (((x ^ y) & 1) == 0)
+                : (((x & 1) == 0) && ((y & 1) == 0));
+            if (paint) w.draw(base + x, r, g, b);
+        }
+    }
+}
+
+// 一个简单的 HUD 面板，显示：TIME、FPS、KILLS
+static void drawHUD(GamesEngineeringBase::Window& w,
+    int remainSec, int fpsInt, int kills)
+{
+    // 背板（半透明感：用深灰+留白边）
+    const int panelX = 10, panelY = 10, panelW = 220, panelH = 80;
+    fillRectStipple(w, panelX, panelY, panelW, panelH, 18, 18, 18, /*pattern=*/0);
+    // 如果想更淡一点，用 pattern=1
+    // fillRectStipple(w, panelX, panelY, panelW, panelH, 18,18,18, 1);
+
+    // 标题行
+    drawText5x7(w, panelX + 8, panelY + 8, "TIME:", 255, 240, 180, 2);
+    drawNumber(w, panelX + 92, panelY + 8, remainSec, 255, 240, 180, 2);
+
+    drawText5x7(w, panelX + 8, panelY + 32, "FPS:", 180, 220, 255, 2);
+    drawNumber(w, panelX + 72, panelY + 32, fpsInt, 180, 220, 255, 2);
+
+    drawText5x7(w, panelX + 8, panelY + 56, "KILLS:", 200, 255, 200, 2);
+    drawNumber(w, panelX + 96, panelY + 56, kills, 200, 255, 200, 2);
+}
+
+// === FPS 统计：滑动窗口（更稳定）===
+static const int FPS_SAMPLES = 120; // 约1~2秒窗口
+float  dtBuf[FPS_SAMPLES];
+int    dtIdx = 0;
+int    dtCount = 0;
+double dtSum = 0.0;
+int    fpsDisplay = 60;
+// —— 立即初始化缓冲，避免未定义值影响统计 —— 
+void initFpsBuffer() {
+    for (int i = 0; i < FPS_SAMPLES; ++i) dtBuf[i] = 0.0f;
+    dtIdx = 0; dtCount = 0; dtSum = 0.0; fpsDisplay = 60;
+}
 
 int main()
 {
@@ -65,6 +233,10 @@ int main()
     NPCSystem npcSys;
     npcSys.init(&map);
     // ★ 让 NPC 系统知道地图尺寸
+    // 
+    // === 增益果实系统 ===
+    PickupSystem pickups;
+    pickups.init(&map);
 
 
     // 起点放在地图中心（防止相机起跳）
@@ -76,6 +248,13 @@ int main()
     // 2) 定时器用于帧间隔（dt）
     Timer timer; // 调用 dt() 会返回并重置起点，建议每帧只调用一次 :contentReference[oaicite:4]{index=4}
 
+    // === HUD统计 ===
+    float totalTime = 0.f;         // 累计时间
+    int   totalKills = 0;          // 累计击杀
+    float fpsSmoothed = 60.f;      // 平滑 FPS（EMA）
+    
+
+
     // 3) 相机位置（以像素为单位），WASD 移动
     float camX = 0.0f;
     float camY = 0.0f;
@@ -84,16 +263,45 @@ int main()
     // 4) 瓦片尺寸（与作业要求保持一致的 32×32）
     const int TILE = 32;
 
+
+    initFpsBuffer();
+
     // 5) 主循环
     while (true)
     {
         // -- 输入与时间步长
         float dt = timer.dt();         // 每帧的秒数（已重置）:contentReference[oaicite:5]{index=5}
+        // —— FPS 统计（滑动平均 + 简单去极值）——
+        {
+            float dtClamp = dt;
+            // 过滤异常尖峰（窗口切换等），>100ms 当 100ms
+            if (dtClamp > 0.100f) dtClamp = 0.100f;
+            // 过滤零或负值（极少见），给个最小正数
+            if (dtClamp <= 0.000001f) dtClamp = 0.000001f;
+
+            dtSum -= dtBuf[dtIdx];
+            dtBuf[dtIdx] = dtClamp;
+            dtSum += dtClamp;
+
+            dtIdx = (dtIdx + 1) % FPS_SAMPLES;
+            if (dtCount < FPS_SAMPLES) dtCount++;
+
+            double avgDt = (dtCount > 0 ? dtSum / dtCount : 0.0167);
+            // 保护：避免除零
+            double fpsCalc = (avgDt > 1e-6 ? 1.0 / avgDt : (double)fpsDisplay);
+            // 限个上限，防止偶发飙高显示
+            if (fpsCalc > 240.0) fpsCalc = 240.0;
+            fpsDisplay = (int)(fpsCalc + 0.5);
+        }
+
         canvas.checkInput();           // 处理消息/键鼠状态 :contentReference[oaicite:6]{index=6}
         if (canvas.keyPressed(VK_ESCAPE)) break; // 退出键 :contentReference[oaicite:7]{index=7}
 
         // --- 玩家更新（移动 + 动画）---
         hero.update(canvas, dt);
+        // 1) 英雄自动攻击（放在 hero.update(...) 之后）
+        hero.updateAttack(dt, npcSys);
+        hero.updateAOE(dt, npcSys, canvas);
         // 假设你已有这些变量：camX, camY 为相机左上；win 是 Window；hero 有 getX/getY/getW/getH
 // 若你的命名不同，按实际变量替换即可
         int viewW = (int)canvas.getWidth();
@@ -112,6 +320,24 @@ int main()
         npcSys.updateBullets(dt);             // ★ 新增：更新敌方子弹
         npcSys.checkPlayerCollision(hero);
         npcSys.checkBulletHitHero(hero);      // ★ 新增：子弹命中英雄
+        // 2) 英雄子弹更新（放在 npc 更新之后、绘制之前）
+        npcSys.updateHeroBullets(dt);
+        // 3) 命中结算（可用于加分/统计；即使不用分数也要调用以移除命中的 NPC）
+        int killsThisFrame = npcSys.checkHeroBulletsHitNPC();
+        // 统计
+        totalTime += dt;
+        totalKills += killsThisFrame;
+
+        // FPS 平滑
+        float fpsInstant = (dt > 1e-6f ? 1.f / dt : 0.f);
+        fpsSmoothed = 0.90f * fpsSmoothed + 0.10f * fpsInstant;
+
+
+        // —— 刷新果实 & 碰撞拾取 —— 
+        pickups.trySpawn(dt);
+        pickups.updateAndCollide(hero);
+
+
         // --- 边界限制：保证角色不离开地图 ---
         float maxHeroX = (float)map.getPixelWidth() - hero.getW();
         float maxHeroY = (float)map.getPixelHeight() - hero.getH();
@@ -135,12 +361,39 @@ int main()
         // …… 你已有的 drawTileMap(camX, camY) 等
         npcSys.drawAll(canvas, (float)camX, (float)camY);
         npcSys.drawBullets(canvas, (float)camX, (float)camY); // ★ 新增：绘制敌方子弹
+        npcSys.drawHeroBullets(canvas, (float)camX, (float)camY); // ★ 英雄弹
+
+        pickups.draw(canvas, (float)camX, (float)camY);
+
 
         // …… 再画英雄 / UI
 
         hero.draw(canvas, camX, camY);         // 玩家立刻叠在上面
+        // === HUD 显示（窗口内）===
+        int remain = (int)((120.f - totalTime) + 0.999f); if (remain < 0) remain = 0;
+        drawHUD(canvas, remain, fpsDisplay, totalKills);
+
+
+
+
         // 显示到屏幕（把 back buffer 推给 GPU 并 Present）
         canvas.present(); // UpdateSubresource + Draw + SwapChain::Present 已封装好 :contentReference[oaicite:9]{index=9}
+
+        // === 两分钟后结束 ===
+        if (totalTime >= 120.f) {
+            // 可选：清一下屏作为“结束画面”的留白
+            canvas.clear();
+            canvas.present();
+
+            // 作业允许在结束时显示成绩（用控制台输出最稳妥）
+            printf("\n===== GAME OVER (2 minutes) =====\n");
+            printf("Time:   %.1f s\n", totalTime);
+            printf("Kills:  %d\n", totalKills);
+            printf("=================================\n");
+
+            break; // 退出主循环
+        }
+
     }
 
     return 0;

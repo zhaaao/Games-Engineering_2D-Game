@@ -32,6 +32,7 @@ private:
     }
 
 public:
+    friend class NPCSystem;
     // === 生命周期 ===
     void kill() { alive = false; }
     bool isAlive()const { return alive; }
@@ -49,17 +50,24 @@ public:
     {
         if (!alive) return;
 
-        if (type == 0) { // 追踪型：持续趋向玩家
+        // 非炮台（type != 1）都要移动追踪玩家
+        if (type != 1) {
+            // 按类型给不同的“转向灵敏度”：
+            // 轻型(2)更灵活，坦克(3)更迟钝，普通追踪(0)居中
+            float steer = (type == 2 ? 0.35f : (type == 3 ? 0.15f : 0.20f));
+            float inertia = 1.0f - steer;
+
             float ux, uy;
             unitVector(targetX - x, targetY - y, ux, uy);
-            // 平滑转向：0.2 的插值，避免瞬间掉头
-            vx = 0.8f * vx + 0.2f * ux;
-            vy = 0.8f * vy + 0.2f * uy;
+            // 指向目标的平滑转向
+            vx = inertia * vx + steer * ux;
+            vy = inertia * vy + steer * uy;
             unitVector(vx, vy, vx, vy);
+
             x += vx * speed * dt;
             y += vy * speed * dt;
         }
-        // type==1 炮台：先不移动（后续可加发射计时器）
+        // type == 1 炮台：保持静止，仅在系统里发射子弹
 
         // 边界夹紧
         if (x < 0) x = 0; if (y < 0) y = 0;
@@ -79,7 +87,20 @@ public:
         if (sx + w < 0 || sy + h < 0 || sx >= W || sy >= H) return;
 
         unsigned char r = 255, g = 0, b = 0;
-        if (type == 1) { r = 180; g = 0; b = 255; } // 炮台=紫
+        switch (type)
+        {
+        case 0: // 追踪：红
+            r = 255; g = 60;  b = 60;  break;
+        case 1: // 炮台：紫
+            r = 180; g = 0;   b = 255; break;
+        case 2: // 轻型冲锋：青绿
+            r = 40;  g = 230; b = 200; break;
+        case 3: // 重装坦克：橙
+            r = 255; g = 150; b = 40;  break;
+        default:
+            r = 255; g = 0;   b = 0;   break;
+        }
+
         for (int yy = 0; yy < h; ++yy) {
             int py = sy + yy; if (py < 0 || py >= H) continue;
             int base = py * W;
@@ -87,6 +108,18 @@ public:
                 int px = sx + xx; if (px < 0 || px >= W) continue;
                 win.draw(base + px, r, g, b);
             }
+        }
+    }
+
+    void applyDamage(int dmg) {
+        if (!alive || dmg <= 0) return;
+        if (hp > 0) {
+            hp -= dmg;
+            if (hp <= 0) { kill(); }
+        }
+        else {
+            // 若没有使用 hp 的关卡，也保证能被击杀
+            kill();
         }
     }
 
@@ -106,5 +139,6 @@ public:
 
     float getFireCD() const { return fireCD; }
     void  setFireCD(float v) { fireCD = v; }
-
+    int   getHP() const { return hp; }
+    
 };
