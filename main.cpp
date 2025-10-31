@@ -103,8 +103,15 @@ int main()
         npcSys.trySpawn(dt, (float)camX, (float)camY, viewW, viewH, hero.getX(), hero.getY());
 
         // —— 再更新所有 NPC（追踪玩家等）——
-        npcSys.updateAll(dt, hero.getX(), hero.getY());
+        npcSys.updateAll(
+            dt,
+            hero.getHitboxX() + hero.getHitboxW() * 0.5f,   // 传中心X
+            hero.getHitboxY() + hero.getHitboxH() * 0.5f    // 传中心Y
+        );
 
+        npcSys.updateBullets(dt);             // ★ 新增：更新敌方子弹
+        npcSys.checkPlayerCollision(hero);
+        npcSys.checkBulletHitHero(hero);      // ★ 新增：子弹命中英雄
         // --- 边界限制：保证角色不离开地图 ---
         float maxHeroX = (float)map.getPixelWidth() - hero.getW();
         float maxHeroY = (float)map.getPixelHeight() - hero.getH();
@@ -127,6 +134,8 @@ int main()
         map.draw(canvas, camX, camY);
         // …… 你已有的 drawTileMap(camX, camY) 等
         npcSys.drawAll(canvas, (float)camX, (float)camY);
+        npcSys.drawBullets(canvas, (float)camX, (float)camY); // ★ 新增：绘制敌方子弹
+
         // …… 再画英雄 / UI
 
         hero.draw(canvas, camX, camY);         // 玩家立刻叠在上面

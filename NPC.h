@@ -12,6 +12,8 @@ public:
     // 0=追踪；1=炮台（静止，后续可扩展发射子弹）
     unsigned char type = 0;
     bool  alive = false;
+    // --- Turret (type==1) 专用的简单发射冷却（秒） ---
+    float fireCD = 0.0f;   // 倒计时到 0 即可发射；由 NPCSystem 更新与重置
 
 private:
     float x = 0.f, y = 0.f;   // 世界坐标（左上角）
@@ -93,4 +95,16 @@ public:
     float getY()const { return y; }
     int   getW()const { return w; }
     int   getH()const { return h; }
+    // 命名统一的碰撞盒访问（与 Player 命名对齐）
+    float getHitboxX() const { return x; }
+    float getHitboxY() const { return y; }
+    int   getHitboxW() const { return w; }
+    int   getHitboxH() const { return h; }
+    // --- 放到 NPC.h, class NPC 的 public 区域 ---
+    int   getType() const { return type; }
+    void  setType(int t) { type = t; }
+
+    float getFireCD() const { return fireCD; }
+    void  setFireCD(float v) { fireCD = v; }
+
 };

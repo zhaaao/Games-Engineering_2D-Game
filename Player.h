@@ -15,6 +15,9 @@ class Player
 public:
     enum Dir { Down = 0, Right = 1, Up = 2, Left = 3 };
     void bindMap(TileMap* m) { map = m; }
+    // —— 可调碰撞盒（默认等于帧大小，先不改变手感）——
+    int hitboxW = 0;
+    int hitboxH = 0;
 
 private:
     float x = 0.f, y = 0.f;     // 世界坐标（以像素为单位）
@@ -23,12 +26,48 @@ private:
     SpriteSheet* sheet = nullptr;
     Animator anim;              // 列序动画器（0..3）
     TileMap* map = nullptr;
-
+    // —— 击退速度（像素/秒）与剩余时长 —— 
+    float kx = 0.f, ky = 0.f;
+    float kTime = 0.f;
+    float hitCooldown = 0.f;
+    // 如果没有的话，提供帧尺寸访问
+    int getFrameW() const { return sheet ? sheet->getFrameW() : 32; }
+    int getFrameH() const { return sheet ? sheet->getFrameH() : 32; }
 
 public:
-    void attachSprite(SpriteSheet* s) { sheet = s; }
+    // —— 构造：给 hitbox 一个安全默认值（sheet 还没绑定时用）——
+    Player()
+        : x(0.f), y(0.f), speed(150.f), dir(Down),
+        sheet(nullptr), anim(), map(nullptr)
+    {
+        // 默认 32×32；若之后绑定了精灵表，会在 attachSprite 里用真实帧尺寸覆盖
+        setHitbox(32, 32);
+    }
+
+    void attachSprite(SpriteSheet* s) {
+        sheet = s;
+        if (sheet && sheet->valid()) {
+            // 如果之前是默认值（或你愿意总是跟随帧尺寸），就同步到帧尺寸
+            // 建议：总是覆盖，避免资源更换后盒子没更新
+            setHitbox(sheet->getFrameW(), sheet->getFrameH());
+        }
+    }
+
     void setPosition(float px, float py) { x = px; y = py; }
     void setSpeed(float s) { speed = s; }
+     // 初始化后在构造/Init里，把它们设为帧宽高，或略小一点
+    void setHitbox(int w, int h) { hitboxW = w; hitboxH = h; }
+
+    // —— 中心对齐的碰撞盒 —— 
+    float getHitboxX() const { 
+        // 假设 x,y 是“精灵左上角”，把盒子居中到图像内部
+        return x + (getFrameW() - hitboxW) * 0.5f; 
+    }
+    float getHitboxY() const { 
+        return y + (getFrameH() - hitboxH) * 0.5f; 
+    }
+    int   getHitboxW() const { return hitboxW; }
+    int   getHitboxH() const { return hitboxH; }
     float getX() const { return x; }
     float getY() const { return y; }
     int getW() const { return sheet ? sheet->getFrameW() : 0; }
@@ -61,78 +100,112 @@ public:
         float len = std::sqrt(vx * vx + vy * vy);
         if (len > 0.0001f) { vx /= len; vy /= len; }
 
-        // 4) 移动
+        // === NEW: 本帧位移 = 输入位移 + 击退位移 ===
+        float dx = vx * speed * dt;
+        float dy = vy * speed * dt;
+
+        // 击退位移叠加 + 衰减（需要类里有 kx,ky,kTime,hitCooldown 字段）
+        if (kTime > 0.f) {
+            dx += kx * dt;
+            dy += ky * dt;
+            kTime -= dt;
+
+            // 指数衰减，系数可调（越大停得越快）
+            float damp = std::exp(-6.f * dt);
+            kx *= damp; ky *= damp;
+
+            if (kTime <= 0.f) { kTime = 0.f; kx = 0.f; ky = 0.f; }
+        }
+        if (hitCooldown > 0.f) hitCooldown -= dt;
+
+        // 4) 移动（用 Hitbox 做地形碰撞）
         if (!map) {
-            // 兜底：没有地图就直接位移
-            x += vx * speed * dt;
-            y += vy * speed * dt;
+            x += dx;
+            y += dy;;
         }
         else {
-            const int w = getW(), h = getH();
             const int tw = map->getTileW(), th = map->getTileH();
 
-            // -------- 水平位移并处理阻挡 --------
-            float nx = x + vx * speed * dt;
-            if (vx > 0.f) {
-                // 取移动后右侧像素所在的瓦片列
-                int right = (int)(nx + w - 1);
-                int tx = right / tw;
-                int top = (int)(y) / th;
-                int bot = (int)(y + h - 1) / th;
-                for (int ty = top; ty <= bot; ++ty) {
-                    if (map->isBlockedAt(tx, ty)) {
-                        nx = (float)(tx * tw - w);   // 卡在阻挡块左侧
-                        break;
-                    }
-                }
-            }
-            else if (vx < 0.f) {
-                int left = (int)nx;
-                int tx = left / tw;
-                int top = (int)(y) / th;
-                int bot = (int)(y + h - 1) / th;
-                for (int ty = top; ty <= bot; ++ty) {
-                    if (map->isBlockedAt(tx, ty)) {
-                        nx = (float)((tx + 1) * tw); // 卡在阻挡块右侧
-                        break;
-                    }
-                }
-            }
-            x = nx;
+            // —— 准备帧尺寸与碰撞盒尺寸（要求 Player 提供下列接口）——
+            const int fw = getFrameW();      // == sheet->getFrameW()
+            const int fh = getFrameH();      // == sheet->getFrameH()
+            const int hw = getHitboxW();     // 碰撞盒宽
+            const int hh = getHitboxH();     // 碰撞盒高
+            const float offX = (fw - hw) * 0.5f;   // 居中偏移
+            const float offY = (fh - hh) * 0.5f;
 
-            // -------- 垂直位移并处理阻挡 --------
-            float ny = y + vy * speed * dt;
-            if (vy > 0.f) {
-                int bottom = (int)(ny + h - 1);
-                int ty = bottom / th;
-                int left = (int)x / tw;
-                int rightC = (int)(x + w - 1) / tw;
-                for (int tx = left; tx <= rightC; ++tx) {
+            // —— 候选渲染位置 —— 
+            float nx = x + dx;  // 包含击退后的总位移
+            float ny = y + dy;
+
+            // —— 换算到“碰撞盒左上角坐标” —— 
+            float hx = nx + offX;
+            float hy = ny + offY;
+
+            // -------- 水平位移并处理阻挡（改：看 dx 的正负，不再看 vx） --------
+            if (dx > 0.f) {
+                int rightPix = (int)(hx + hw - 1);
+                int tx = rightPix / tw;
+                int topRow = (int)hy / th;
+                int botRow = (int)(hy + hh - 1) / th;
+                for (int ty = topRow; ty <= botRow; ++ty) {
                     if (map->isBlockedAt(tx, ty)) {
-                        ny = (float)(ty * th - h);   // 卡在阻挡块上方
+                        hx = (float)(tx * tw - hw);   // 卡在阻挡块左侧
                         break;
                     }
                 }
             }
-            else if (vy < 0.f) {
-                int top = (int)ny / th;
-                int left = (int)x / tw;
-                int rightC = (int)(x + w - 1) / tw;
-                for (int tx = left; tx <= rightC; ++tx) {
-                    if (map->isBlockedAt(tx, top)) {
-                        ny = (float)((top + 1) * th); // 卡在阻挡块下方
+            else if (dx < 0.f) {
+                int leftPix = (int)hx;
+                int tx = leftPix / tw;
+                int topRow = (int)hy / th;
+                int botRow = (int)(hy + hh - 1) / th;
+                for (int ty = topRow; ty <= botRow; ++ty) {
+                    if (map->isBlockedAt(tx, ty)) {
+                        hx = (float)((tx + 1) * tw); // 卡在阻挡块右侧
                         break;
                     }
                 }
             }
+
+            // -------- 垂直位移并处理阻挡（改：看 dy 的正负，不再看 vy） --------
+            if (dy > 0.f) {
+                int bottomPix = (int)(hy + hh - 1);
+                int ty = bottomPix / th;
+                int leftCol = (int)hx / tw;
+                int rightCol = (int)(hx + hw - 1) / tw;
+                for (int tx = leftCol; tx <= rightCol; ++tx) {
+                    if (map->isBlockedAt(tx, ty)) {
+                        hy = (float)(ty * th - hh);   // 卡在阻挡块上方
+                        break;
+                    }
+                }
+            }
+            else if (dy < 0.f) {
+                int topTile = (int)hy / th;
+                int leftCol = (int)hx / tw;
+                int rightCol = (int)(hx + hw - 1) / tw;
+                for (int tx = leftCol; tx <= rightCol; ++tx) {
+                    if (map->isBlockedAt(tx, topTile)) {
+                        hy = (float)((topTile + 1) * th); // 卡在阻挡块下方
+                        break;
+                    }
+                }
+            }
+
+            // —— 把“碰撞盒坐标”换回渲染坐标 —— 
+            nx = hx - offX;
+            ny = hy - offY;
+
+            x = nx;
             y = ny;
         }
-
 
         // 5) 动画：移动就播放；静止就停在第0列
         if (len > 0.0f) anim.start(); else anim.stop();
         anim.update(dt);
     }
+
 
     // 根据相机绘制到屏幕
     void draw(Window& w, float camX, float camY)
@@ -141,5 +214,18 @@ public:
         int sx = (int)(x - camX);
         int sy = (int)(y - camY);
         sheet->drawFrame(w, (int)dir, anim.current(), sx, sy);
+    }
+
+    // 应用于玩家的击退（dirX,dirY 是方向向量；power=像素/秒；duration=秒）
+    void applyKnockback(float dirX, float dirY, float power, float duration)
+    {
+        if (hitCooldown > 0.f) return;              // 简单防抖：无敌/冷却期内不叠加
+        float len = std::sqrt(dirX * dirX + dirY * dirY);
+        if (len < 1e-6f) return;
+        dirX /= len; dirY /= len;
+        kx = dirX * power;
+        ky = dirY * power;
+        kTime = duration;
+        hitCooldown = 0.10f;                        // 100ms：避免同一帧多次触发
     }
 };
