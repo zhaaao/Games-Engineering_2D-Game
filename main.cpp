@@ -12,9 +12,14 @@
 #include "Player.h" 
 #include "NPCSystem.h"
 #include "PickupSystem.h"
+#include "SaveLoad.h"
 
 using namespace GamesEngineeringBase;
 using namespace std;
+
+// main.cpp 顶部（include 之后）
+enum class GameMode { Fixed, Infinite };
+GameMode gMode = GameMode::Fixed;
 
 
 // ✅ 辅助函数：id→颜色映射
@@ -191,6 +196,55 @@ static void drawHUD(GamesEngineeringBase::Window& w,
     drawNumber(w, panelX + 96, panelY + 56, kills, 200, 255, 200, 2);
 }
 
+
+// === Game Over 屏幕：显示统计并等待按键退出 ===
+static void showGameOverScreen(GamesEngineeringBase::Window& w,
+    int kills, int fpsInt)
+{
+    const int W = (int)w.getWidth();
+    const int H = (int)w.getHeight();
+
+    // 半透明遮罩（棋盘点阵伪透明）
+    fillRectStipple(w, 0, 0, W, H, 0, 0, 0, 1);
+
+    // 中央面板
+    const int panelW = 360, panelH = 200;
+    const int panelX = (W - panelW) / 2;
+    const int panelY = (H - panelH) / 2;
+    fillRectUI(w, panelX, panelY, panelW, panelH, 24, 24, 24);
+
+    // 标题
+    drawText5x7(w, panelX + 24, panelY + 20, "== GAME OVER ==", 255, 220, 180, 3);
+
+    // 统计
+    drawText5x7(w, panelX + 24, panelY + 80, "KILLS:", 200, 255, 200, 2);
+    drawNumber(w, panelX + 130, panelY + 80, kills, 200, 255, 200, 2);
+
+    drawText5x7(w, panelX + 24, panelY + 110, "FPS:", 180, 220, 255, 2);
+    drawNumber(w, panelX + 100, panelY + 110, fpsInt, 180, 220, 255, 2);
+
+    // 提示
+    drawText5x7(w, panelX + 24, panelY + 150, "Press ENTER / Q / ESC to quit",
+        255, 240, 180, 2);
+
+    // 先把这一帧显示出来
+    w.present();
+
+    // 等待按键（窗口保持显示）
+    for (;;)
+    {
+        w.checkInput();
+        if (w.keyPressed(VK_RETURN) || w.keyPressed(VK_ESCAPE) || w.keyPressed('Q'))
+            break;
+        // 轻微让出CPU（可要可不要）
+        Sleep(10);
+
+        // 如果你想让标题有轻微闪烁效果，也可以每帧重画：
+        // （简单起见，这里不做动画；保持静止一帧画面）
+    }
+}
+
+
 // === FPS 统计：滑动窗口（更稳定）===
 static const int FPS_SAMPLES = 120; // 约1~2秒窗口
 float  dtBuf[FPS_SAMPLES];
@@ -217,6 +271,17 @@ int main()
     map.setImageFolder("Resources/"); // 假设 0.png、1.png… 放在 .\tiles\ 目录下
     // 3) 载入主角精灵（请改为你的真实帧尺寸）
    //    约定：前四行表示 下/右/左/上；每行四列做行走动画
+   
+    // === 选择游戏模式 ===
+    printf("Select mode: [1] Fixed world   [2] Infinite (wrapping) world\n");
+    printf("Your choice: ");
+    int m = 1;
+    std::cin >> m;
+    gMode = (m == 2 ? GameMode::Infinite : GameMode::Fixed);
+
+    // === 设置地图是否循环 ===
+    map.setWrap(gMode == GameMode::Infinite);
+
     SpriteSheet heroSheet;
     if (!heroSheet.load("Resources/Abigail.png", /*frameW*/16, /*frameH*/32, /*rows*/13, /*cols*/4)) {
         printf("❌ Failed to load Abigail sprite\n");
@@ -230,14 +295,15 @@ int main()
     hero.setSpeed(150.f);
 
     // …… 你的地图加载、英雄初始化、bindMap(&map) 之后
-    NPCSystem npcSys;
+    EnemyManager npcSys;
     npcSys.init(&map);
+    npcSys.setInfinite(gMode == GameMode::Infinite);
     // ★ 让 NPC 系统知道地图尺寸
     // 
     // === 增益果实系统 ===
     PickupSystem pickups;
     pickups.init(&map);
-
+    pickups.setInfinite(gMode == GameMode::Infinite);
 
     // 起点放在地图中心（防止相机起跳）
     float startX = (float)(map.getPixelWidth() / 2 - hero.getW() / 2);
@@ -265,6 +331,8 @@ int main()
 
 
     initFpsBuffer();
+
+
 
     // 5) 主循环
     while (true)
@@ -297,6 +365,49 @@ int main()
         canvas.checkInput();           // 处理消息/键鼠状态 :contentReference[oaicite:6]{index=6}
         if (canvas.keyPressed(VK_ESCAPE)) break; // 退出键 :contentReference[oaicite:7]{index=7}
 
+
+        // === 存档/读档按键 ===
+// F5 保存；F9 读取
+        if (canvas.keyPressed(VK_F5))
+        {
+            bool ok = SaveLoad::SaveToFile("save.dat",
+                hero, npcSys,
+                totalTime, totalKills,
+                (gMode == GameMode::Infinite));
+            printf(ok ? "[SAVE] save.dat written\n" : "[SAVE] failed to write save.dat\n");
+        }
+        if (canvas.keyPressed(VK_F9))
+        {
+            bool infinite = (gMode == GameMode::Infinite);
+            float t = totalTime;
+            int   kills = totalKills;
+
+            bool ok = SaveLoad::LoadFromFile("save.dat",
+                hero, npcSys,
+                t, kills, infinite);
+            if (ok)
+            {
+                totalTime = t;
+                totalKills = kills;
+
+                // 切换模式（影响TileMap wrap与系统标志）
+                gMode = (infinite ? GameMode::Infinite : GameMode::Fixed);
+                map.setWrap(infinite);
+                npcSys.setInfinite(infinite);
+
+                // 重新定位相机以跟随玩家
+                camX = hero.getX() - (canvas.getWidth() * 0.5f) + hero.getW() * 0.5f;
+                camY = hero.getY() - (canvas.getHeight() * 0.5f) + hero.getH() * 0.5f;
+
+                printf("[LOAD] save.dat loaded (mode=%s)\n", infinite ? "Infinite" : "Fixed");
+            }
+            else
+            {
+                printf("[LOAD] failed to load save.dat\n");
+            }
+        }
+
+
         // --- 玩家更新（移动 + 动画）---
         hero.update(canvas, dt);
         // 1) 英雄自动攻击（放在 hero.update(...) 之后）
@@ -319,11 +430,11 @@ int main()
 
         npcSys.updateBullets(dt);             // ★ 新增：更新敌方子弹
         npcSys.checkPlayerCollision(hero);
-        npcSys.checkBulletHitHero(hero);      // ★ 新增：子弹命中英雄
+        npcSys.checkHeroHit(hero);      // ★ 新增：子弹命中英雄
         // 2) 英雄子弹更新（放在 npc 更新之后、绘制之前）
         npcSys.updateHeroBullets(dt);
         // 3) 命中结算（可用于加分/统计；即使不用分数也要调用以移除命中的 NPC）
-        int killsThisFrame = npcSys.checkHeroBulletsHitNPC();
+        int killsThisFrame = npcSys.checkNPCHit();
         // 统计
         totalTime += dt;
         totalKills += killsThisFrame;
@@ -334,25 +445,31 @@ int main()
 
 
         // —— 刷新果实 & 碰撞拾取 —— 
-        pickups.trySpawn(dt);
+        pickups.trySpawn(dt, camX, camY);
         pickups.updateAndCollide(hero);
 
 
         // --- 边界限制：保证角色不离开地图 ---
-        float maxHeroX = (float)map.getPixelWidth() - hero.getW();
-        float maxHeroY = (float)map.getPixelHeight() - hero.getH();
-        if (maxHeroX < 0) maxHeroX = 0;
-        if (maxHeroY < 0) maxHeroY = 0;
-        hero.clampPosition(0.0f, 0.0f, maxHeroX, maxHeroY);
+        if (gMode == GameMode::Fixed) {
+            float maxHeroX = (float)map.getPixelWidth() - hero.getW();
+            float maxHeroY = (float)map.getPixelHeight() - hero.getH();
+            if (maxHeroX < 0) maxHeroX = 0;
+            if (maxHeroY < 0) maxHeroY = 0;
+            hero.clampPosition(0.0f, 0.0f, maxHeroX, maxHeroY);
+        }
         // --- 计算相机：始终把玩家放在屏幕中央（可偏移半帧使观感更居中）---
         camX = hero.getX() - (canvas.getWidth() * 0.5f) + hero.getW() * 0.5f;
         camY = hero.getY() - (canvas.getHeight() * 0.5f) + hero.getH() * 0.5f;
 
         // --- 夹紧相机不出地图 ---
-        float maxX = (float)map.getPixelWidth() - canvas.getWidth();
-        float maxY = (float)map.getPixelHeight() - canvas.getHeight();
-        if (camX < 0) camX = 0; if (camY < 0) camY = 0;
-        if (camX > maxX) camX = maxX; if (camY > maxY) camY = maxY;
+        if (gMode == GameMode::Fixed) {
+            float maxX = (float)map.getPixelWidth() - canvas.getWidth();
+            float maxY = (float)map.getPixelHeight() - canvas.getHeight();
+            if (camX < 0) camX = 0; if (camY < 0) camY = 0;
+            if (camX > maxX) camX = maxX; if (camY > maxY) camY = maxY;
+        }
+        // Infinite 模式不夹紧；渲染时 TileMap 会用 get() 包装成循环贴图
+
 
         // -- 渲染
         canvas.clear(); // 先清屏（内部把 back buffer 置黑）:contentReference[oaicite:8]{index=8}
@@ -396,5 +513,16 @@ int main()
 
     }
 
-    return 0;
+    if (totalTime >= 120.f)
+    {
+        // 计算一次最终 fpsInt（你已有 fpsSmoothed 或 fpsDisplay 就用它）
+        int fpsInt = fpsDisplay;  // 或者 (int)(fpsSmoothed + 0.5f);
+
+        // 窗口内显示结束界面，等待按键
+        showGameOverScreen(canvas, totalKills, fpsInt);
+
+        // 这时用户已按键确认，安全退出
+        return 0;
+    }
+
 }

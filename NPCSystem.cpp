@@ -2,7 +2,7 @@
 #include "Player.h"      // 需要完整 Player 定义
 #include <cmath>
 
-void HeroBullet::spawn(float sx, float sy, float dirx, float diry, float speed, float ttl)
+void PlayerProjectile::spawn(float sx, float sy, float dirx, float diry, float speed, float ttl)
 {
     alive = true;
     x = sx; y = sy;
@@ -15,24 +15,24 @@ void HeroBullet::spawn(float sx, float sy, float dirx, float diry, float speed, 
     damage = 1;
     isAOE = false;
 }
-void HeroBullet::update(float dt) {
+void PlayerProjectile::update(float dt) {
     if (!alive) return;
     x += vx * dt; y += vy * dt;
     life -= dt;
     if (life <= 0.f) alive = false;
 }
-int NPCSystem::allocIndex()
+int EnemyManager::allocIndex()
 {
-    for (int i = 0; i < MAX; ++i) if (!npcs[i].isAlive()) return i;
+    for (int i = 0; i < MAX; ++i) if (!enemies[i].isAlive()) return i;
     return -1;
 }
-void NPCSystem::mapPixelSize(int& outW, int& outH)
+void EnemyManager::mapPixelSize(int& outW, int& outH)
 {
-    if (!map) { outW = outH = 0; return; }
-    outW = map->getWidth() * map->getTileW();   // 你已有这些接口: getWidth/Height, getTileW/H
-    outH = map->getHeight() * map->getTileH();   // :contentReference[oaicite:0]{index=0}
+    if (!tileMap) { outW = outH = 0; return; }
+    outW = tileMap->getWidth() * tileMap->getTileW();   // 你已有这些接口: getWidth/Height, getTileW/H
+    outH = tileMap->getHeight() * tileMap->getTileH();   // :contentReference[oaicite:0]{index=0}
 }
-void NPCSystem::spawnOne(float camX, float camY, int viewW, int viewH, float px, float py)
+void EnemyManager::spawnOne(float camX, float camY, int viewW, int viewH, float px, float py)
 {
     int idx = allocIndex(); if (idx < 0) return;
 
@@ -47,8 +47,11 @@ void NPCSystem::spawnOne(float camX, float camY, int viewW, int viewH, float px,
     else if (edge == 2) { sx = camX + frand01() * viewW; sy = camY - margin - 24; }
     else { sx = camX + frand01() * viewW; sy = camY + viewH + margin; }
 
-    sx = fclamp(sx, 0.f, (float)(worldW - 24));
-    sy = fclamp(sy, 0.f, (float)(worldH - 24));
+    if (!isInfiniteWorld) {
+        sx = fclamp(sx, 0.f, (float)(worldW - 24));
+        sy = fclamp(sy, 0.f, (float)(worldH - 24));
+    }
+    // infinite：允许生成在任意坐标（可视区外圈），不夹紧
 
     // —— 4种类型的简单概率分布 —— 
     // 0: 追踪（60%）  1: 炮台（20%）  2: 冲锋（10%）  3: 坦克（10%）
@@ -77,75 +80,100 @@ void NPCSystem::spawnOne(float camX, float camY, int viewW, int viewH, float px,
     }
 
     // 初始化朝向对准玩家
-    npcs[idx].initSpawn(sx, sy, type, spd, px, py);
+    enemies[idx].initSpawn(sx, sy, type, spd, px, py);
 
     // 通过 friend 访问，覆盖独有属性（体型/生命）
-    npcs[idx].w = w;
-    npcs[idx].h = h;
-    npcs[idx].hp = hp;
+    enemies[idx].w = w;
+    enemies[idx].h = h;
+    enemies[idx].hp = hp;
 
     // 炮台冷却初始化；其他类型设置极大值避免误射
     if (type == 1) {
-        npcs[idx].setFireCD(0.2f + 0.2f * frand01()); // 0.2~0.4s
+        enemies[idx].setFireCD(0.2f + 0.2f * frand01()); // 0.2~0.4s
     }
     else {
-        npcs[idx].setFireCD(999.f);
+        enemies[idx].setFireCD(999.f);
     }
 }
-int NPCSystem::allocBullet()
+int EnemyManager::allocBullet()
 {
     for (int i = 0; i < BULLET_MAX; ++i)
-        if (!bullets[i].alive) return i;
+        if (!enemyProjectiles[i].alive) return i;
     return -1;
 }
-void NPCSystem::init(TileMap* m)
+void EnemyManager::init(TileMap* m)
 {
-    map = m; elapsed = 0.f; spawnTimer = 0.f;
-    for (int i = 0; i < MAX; ++i) npcs[i].kill();
+    tileMap = m; elapsedSeconds = 0.f; spawnAccumulator = 0.f;
+    for (int i = 0; i < MAX; ++i) enemies[i].kill();
     srand(12345); // 如已有全局 srand，可移除
     // —— 子弹池清空 & 世界像素尺寸缓存 —— 
-    for (int i = 0; i < BULLET_MAX; ++i) bullets[i].alive = false;
-    for (int i = 0; i < HERO_BULLET_MAX; ++i) hbullets[i].alive = false;
-    mapPixelSize(worldWpx, worldHpx);
+    for (int i = 0; i < BULLET_MAX; ++i) enemyProjectiles[i].alive = false;
+    for (int i = 0; i < kPlayerProjectileCapacity; ++i) playerProjectiles[i].alive = false;
+    mapPixelSize(worldWidthPx, worldHeightPx);
 
 }
-void NPCSystem::trySpawn(float dt, float camX, float camY, int viewW, int viewH, float px, float py)
+void EnemyManager::trySpawn(float dt, float camX, float camY, int viewW, int viewH, float px, float py)
 {
-    elapsed += dt;
-    float interval = SPAWN_BASE_INTERVAL - SPAWN_ACCEL_PER_SEC * elapsed;
-    if (interval < SPAWN_MIN_INTERVAL) interval = SPAWN_MIN_INTERVAL;
+    elapsedSeconds += dt;
+    float interval = kSpawnBaseInterval - kSpawnAccelPerSec * elapsedSeconds;
+    if (interval < kSpawnMinInterval) interval = kSpawnMinInterval;
 
-    spawnTimer += dt;
-    if (spawnTimer >= interval) {
-        spawnTimer -= interval;
-        int count = (elapsed > 60.f) ? 2 : 1; // 过一分钟后稍微加量
+    spawnAccumulator += dt;
+    if (spawnAccumulator >= interval) {
+        spawnAccumulator -= interval;
+        int count = (elapsedSeconds > 60.f) ? 2 : 1; // 过一分钟后稍微加量
         for (int i = 0; i < count; ++i) spawnOne(camX, camY, viewW, viewH, px, py);
     }
 }
-void NPCSystem::updateAll(float dt, float px, float py)
+void EnemyManager::updateAll(float dt, float px, float py)
 {
     // 世界像素尺寸（供移动/越界等逻辑使用）
     int worldW, worldH;
     mapPixelSize(worldW, worldH);
 
+    // Infinite 模式：把世界尺寸伪装成超大，避免 NPC::update() 的夹紧生效
+    if (isInfiniteWorld) {
+        worldW = 1 << 29;  // ~5e8 px，足够大
+        worldH = 1 << 29;
+    }
+
     for (int i = 0; i < MAX; ++i)
     {
-        if (!npcs[i].isAlive()) continue;
+        if (!enemies[i].isAlive()) continue;
 
         // 先让各自的“移动/转向”等内部逻辑跑一遍（你原本就有）
-        npcs[i].update(dt, px, py, worldW, worldH);
+        enemies[i].update(dt, px, py, worldW, worldH);
+
+        // === 边界处理：仅固定世界才夹紧 NPC ===
+        if (!isInfiniteWorld) {
+            float x = enemies[i].getX();
+            float y = enemies[i].getY();
+            int   w = enemies[i].getW();
+            int   h = enemies[i].getH();
+
+            if (x < 0) x = 0;
+            if (y < 0) y = 0;
+            if (x > worldW - w) x = (float)(worldW - w);
+            if (y > worldH - h) y = (float)(worldH - h);
+
+            // 因为 NPCSystem 是 NPC 的 friend，可以直接改
+            enemies[i].x = x;
+            enemies[i].y = y;
+        }
+        // Infinite 模式就什么都不做，让 NPC 可以超出原地图区域
+
 
         // === 仅炮台（type==1）会发射子弹 ===
-        if (npcs[i].type == 1)
+        if (enemies[i].type == 1)
         {
             // 冷却倒计时
-            npcs[i].fireCD -= dt;
+            enemies[i].fireCD -= dt;
 
-            if (npcs[i].fireCD <= 0.f)
+            if (enemies[i].fireCD <= 0.f)
             {
                 // —— 获取炮台中心坐标 —— 
-                float cx = npcs[i].getX() + npcs[i].getHitboxW() * 0.5f;
-                float cy = npcs[i].getY() + npcs[i].getHitboxH() * 0.5f;
+                float cx = enemies[i].getX() + enemies[i].getHitboxW() * 0.5f;
+                float cy = enemies[i].getY() + enemies[i].getHitboxH() * 0.5f;
 
                 // —— 计算朝玩家的方向向量 —— 
                 float dirx = px - cx;
@@ -161,23 +189,23 @@ void NPCSystem::updateAll(float dt, float px, float py)
 
                     const float BULLET_SPEED = 280.f;   // 速度 px/s
                     const float BULLET_TTL = 3.0f;    // 最长寿命 s
-                    bullets[bi].spawn(sx, sy, dirx, diry, BULLET_SPEED, BULLET_TTL);
+                    enemyProjectiles[bi].spawn(sx, sy, dirx, diry, BULLET_SPEED, BULLET_TTL);
                 }
 
                 // 重置冷却：1.0~1.4 秒之间轻微抖动，避免所有炮台同频
                 // 如果你项目已有 frand01()（返回 [0,1)），这里会直接用到；
                 // 没有的话见文末“兜底实现”小段。
-                npcs[i].fireCD = 1.0f + 0.4f * frand01();
+                enemies[i].fireCD = 1.0f + 0.4f * frand01();
             }
         }
     }
 }
-void NPCSystem::drawAll(Window& win, float camX, float camY)
+void EnemyManager::drawAll(Window& win, float camX, float camY)
 {
-    for (int i = 0; i < MAX; ++i) if (npcs[i].isAlive())
-        npcs[i].draw(win, camX, camY);
+    for (int i = 0; i < MAX; ++i) if (enemies[i].isAlive())
+        enemies[i].draw(win, camX, camY);
 }
-void NPCSystem::checkPlayerCollision(Player& hero)
+void EnemyManager::checkPlayerCollision(Player& hero)
 {
     // 取玩家碰撞盒
     float hx = hero.getHitboxX();
@@ -191,13 +219,13 @@ void NPCSystem::checkPlayerCollision(Player& hero)
 
     for (int i = 0; i < MAX; ++i)
     {
-        if (!npcs[i].isAlive()) continue;
+        if (!enemies[i].isAlive()) continue;
 
         // NPC 的碰撞盒（当前矩形即碰撞盒）
-        float nx = npcs[i].getHitboxX();
-        float ny = npcs[i].getHitboxY();
-        float nw = (float)npcs[i].getHitboxW();
-        float nh = (float)npcs[i].getHitboxH();
+        float nx = enemies[i].getHitboxX();
+        float ny = enemies[i].getHitboxY();
+        float nw = (float)enemies[i].getHitboxW();
+        float nh = (float)enemies[i].getHitboxH();
 
         if (!aabbIntersect(hx, hy, hw, hh, nx, ny, nw, nh))
             continue;
@@ -229,11 +257,11 @@ void NPCSystem::checkPlayerCollision(Player& hero)
         // hero.takeHit();
     }
 }
-bool NPCSystem::findNearestAlive(float px, float py, float& tx, float& ty) const
+bool EnemyManager::findNearestAlive(float px, float py, float& tx, float& ty) const
 {
     float bestD2 = 1e30f; bool found = false;
     for (int i = 0; i < MAX; ++i) {
-        const NPC& n = npcs[i];
+        const NPC& n = enemies[i];
         if (!n.alive) continue;
         float cx = n.getHitboxX() + n.getHitboxW() * 0.5f;
         float cy = n.getHitboxY() + n.getHitboxH() * 0.5f;
@@ -243,25 +271,25 @@ bool NPCSystem::findNearestAlive(float px, float py, float& tx, float& ty) const
     }
     return found;
 }
-void NPCSystem::updateBullets(float dt)
+void EnemyManager::updateBullets(float dt)
 {
     for (int i = 0; i < BULLET_MAX; ++i)
     {
-        if (!bullets[i].alive) continue;
-        bullets[i].x += bullets[i].vx * dt;
-        bullets[i].y += bullets[i].vy * dt;
-        bullets[i].life -= dt;
+        if (!enemyProjectiles[i].alive) continue;
+        enemyProjectiles[i].x += enemyProjectiles[i].vx * dt;
+        enemyProjectiles[i].y += enemyProjectiles[i].vy * dt;
+        enemyProjectiles[i].life -= dt;
 
         // 世界边界剔除 / 寿命到
-        if (bullets[i].life <= 0.f ||
-            bullets[i].x + bullets[i].w < 0 || bullets[i].y + bullets[i].h < 0 ||
-            bullets[i].x > worldWpx || bullets[i].y > worldHpx)
-        {
-            bullets[i].alive = false;
+        bool outByWorld = (enemyProjectiles[i].x + enemyProjectiles[i].w < 0 || enemyProjectiles[i].y + enemyProjectiles[i].h < 0 ||
+            enemyProjectiles[i].x > worldWidthPx || enemyProjectiles[i].y > worldHeightPx);
+        if (enemyProjectiles[i].life <= 0.f || (!isInfiniteWorld && outByWorld)) {
+            enemyProjectiles[i].alive = false;
         }
+
     }
 }
-void NPCSystem::checkBulletHitHero(Player& hero)
+void EnemyManager::checkHeroHit(Player& hero)
 {
     // 读取英雄的碰撞盒（你已实现居中/帧同步）
     float hx = hero.getHitboxX();
@@ -275,15 +303,15 @@ void NPCSystem::checkBulletHitHero(Player& hero)
 
     for (int i = 0; i < BULLET_MAX; ++i)
     {
-        if (!bullets[i].alive) continue;
+        if (!enemyProjectiles[i].alive) continue;
 
-        if (aabbOverlap(bullets[i].getHitboxX(), bullets[i].getHitboxY(),
-            bullets[i].getHitboxW(), bullets[i].getHitboxH(),
+        if (aabbOverlap(enemyProjectiles[i].getHitboxX(), enemyProjectiles[i].getHitboxY(),
+            enemyProjectiles[i].getHitboxW(), enemyProjectiles[i].getHitboxH(),
             hx, hy, hw, hh))
         {
             // 击退方向：从子弹指向英雄（把英雄往外推）
-            float dirx = (hcx - (bullets[i].x + bullets[i].w * 0.5f));
-            float diry = (hcy - (bullets[i].y + bullets[i].h * 0.5f));
+            float dirx = (hcx - (enemyProjectiles[i].x + enemyProjectiles[i].w * 0.5f));
+            float diry = (hcy - (enemyProjectiles[i].y + enemyProjectiles[i].h * 0.5f));
 
             // 触发你已有的击退（与 NPC 碰撞一致的一套手感参数）
             hero.applyKnockback(dirx, diry, 220.f /*power*/, 0.12f /*duration*/);
@@ -292,24 +320,24 @@ void NPCSystem::checkBulletHitHero(Player& hero)
             // hero.takeHit();
 
             // 子弹失活
-            bullets[i].alive = false;
+            enemyProjectiles[i].alive = false;
         }
     }
 }
-void NPCSystem::drawBullets(Window& win, float camX, float camY)
+void EnemyManager::drawBullets(Window& win, float camX, float camY)
 {
     const int W = (int)win.getWidth();
     const int H = (int)win.getHeight();
 
     for (int i = 0; i < BULLET_MAX; ++i)
     {
-        if (!bullets[i].alive) continue;
+        if (!enemyProjectiles[i].alive) continue;
 
         // 屏幕坐标
-        int sx = (int)(bullets[i].x - camX);
-        int sy = (int)(bullets[i].y - camY);
-        int bw = bullets[i].h;   // 小方块子弹，6x6
-        int bh = bullets[i].h;
+        int sx = (int)(enemyProjectiles[i].x - camX);
+        int sy = (int)(enemyProjectiles[i].y - camY);
+        int bw = enemyProjectiles[i].h;   // 小方块子弹，6x6
+        int bh = enemyProjectiles[i].h;
 
         // —— 矩形剪裁（完全在屏幕外则跳过）——
         if (sx >= W || sy >= H || sx + bw <= 0 || sy + bh <= 0) continue;
@@ -325,29 +353,29 @@ void NPCSystem::drawBullets(Window& win, float camX, float camY)
                 win.draw(x, y, 255, 40, 40);  // ← 保证不会越界
     }
 }
-void NPCSystem::spawnHeroBullet(float sx, float sy, float dirx, float diry, float speed, float ttl)
+void EnemyManager::spawnHeroBullet(float sx, float sy, float dirx, float diry, float speed, float ttl)
 {
     // 找空位
-    for (int i = 0; i < HERO_BULLET_MAX; ++i) {
-        if (!hbullets[i].alive) {
-            hbullets[i].spawn(sx, sy, dirx, diry, speed, ttl);
+    for (int i = 0; i < kPlayerProjectileCapacity; ++i) {
+        if (!playerProjectiles[i].alive) {
+            playerProjectiles[i].spawn(sx, sy, dirx, diry, speed, ttl);
             return;
         }
     }
     // 满了就丢弃（也可覆盖最老的）
 }
-void NPCSystem::updateHeroBullets(float dt)
+void EnemyManager::updateHeroBullets(float dt)
 {
-    for (int i = 0; i < HERO_BULLET_MAX; ++i) {
-        if (hbullets[i].alive) hbullets[i].update(dt);
+    for (int i = 0; i < kPlayerProjectileCapacity; ++i) {
+        if (playerProjectiles[i].alive) playerProjectiles[i].update(dt);
     }
 }
-void NPCSystem::drawHeroBullets(Window& win, float camX, float camY)
+void EnemyManager::drawHeroBullets(Window& win, float camX, float camY)
 {
     const int W = (int)win.getWidth();
     const int H = (int)win.getHeight();
-    for (int i = 0; i < HERO_BULLET_MAX; ++i) {
-        const HeroBullet& b = hbullets[i];
+    for (int i = 0; i < kPlayerProjectileCapacity; ++i) {
+        const PlayerProjectile& b = playerProjectiles[i];
         if (!b.alive) continue;
 
         int sx = (int)(b.x - camX);
@@ -364,15 +392,15 @@ void NPCSystem::drawHeroBullets(Window& win, float camX, float camY)
                 win.draw(x, y, b.r, b.g, b.b);  // ✅ 用子弹自身颜色
     }
 }
-int NPCSystem::checkHeroBulletsHitNPC()
+int EnemyManager::checkNPCHit()
 {
     int kills = 0;
-    for (int bi = 0; bi < HERO_BULLET_MAX; ++bi) {
-        HeroBullet& b = hbullets[bi];
+    for (int bi = 0; bi < kPlayerProjectileCapacity; ++bi) {
+        PlayerProjectile& b = playerProjectiles[bi];
         if (!b.alive) continue;
 
         for (int i = 0; i < MAX; ++i) {
-            NPC& n = npcs[i];
+            NPC& n = enemies[i];
             if (!n.alive) continue;
 
             if (aabbOverlap(b.x, b.y, b.w, b.h, n.x, n.y, n.w, n.h)) {
@@ -391,7 +419,7 @@ int NPCSystem::checkHeroBulletsHitNPC()
     return kills;
 }
 // NPCSystem.cpp
-int NPCSystem::aoeStrikeTopN(int N, int damage, float heroCx, float heroCy)
+int EnemyManager::aoeStrikeTopN(int N, int damage, float heroCx, float heroCy)
 {
     if (N <= 0 || damage <= 0) return 0;
 
@@ -409,8 +437,8 @@ int NPCSystem::aoeStrikeTopN(int N, int damage, float heroCx, float heroCy)
         // 扫描找“HP 最高且未被挑过且存活”的 NPC
         for (int i = 0; i < MAX; ++i)
         {
-            if (!npcs[i].alive || picked[i]) continue;
-            int hp = (npcs[i].hp > 0 ? npcs[i].hp : 1); // 防止未初始化 hp 时挑不到
+            if (!enemies[i].alive || picked[i]) continue;
+            int hp = (enemies[i].hp > 0 ? enemies[i].hp : 1); // 防止未初始化 hp 时挑不到
             if (hp > bestHP) { bestHP = hp; bestIdx = i; }
         }
 
@@ -418,8 +446,8 @@ int NPCSystem::aoeStrikeTopN(int N, int damage, float heroCx, float heroCy)
         picked[bestIdx] = true;
 
         // 目标中心点
-        float tx = npcs[bestIdx].x + npcs[bestIdx].w * 0.5f;
-        float ty = npcs[bestIdx].y + npcs[bestIdx].h * 0.5f;
+        float tx = enemies[bestIdx].x + enemies[bestIdx].w * 0.5f;
+        float ty = enemies[bestIdx].y + enemies[bestIdx].h * 0.5f;
 
         // 发射一发 “紫色 AOE 子弹”（速度稍快、寿命略短）
         spawnAoeBullet(heroCx, heroCy, tx, ty, /*speed*/520.f, /*ttl*/0.9f, damage);
@@ -429,22 +457,22 @@ int NPCSystem::aoeStrikeTopN(int N, int damage, float heroCx, float heroCy)
     return fired; // 返回本次实际发射的 AOE 弹数（也可用于加分）
 }
 // NPCSystem.cpp
-void NPCSystem::spawnAoeBullet(float sx, float sy, float tx, float ty, float speed, float ttl, int dmg)
+void EnemyManager::spawnAoeBullet(float sx, float sy, float tx, float ty, float speed, float ttl, int dmg)
 {
     // 找空位（与 spawnHeroBullet 相同的做法）
-    for (int i = 0; i < HERO_BULLET_MAX; ++i) {
-        if (!hbullets[i].alive) {
+    for (int i = 0; i < kPlayerProjectileCapacity; ++i) {
+        if (!playerProjectiles[i].alive) {
             // 方向
             float dx = tx - sx, dy = ty - sy;
             float len = std::sqrt(dx * dx + dy * dy);
             if (len < 1e-6f) { dx = 1.f; dy = 0.f; len = 1.f; }
             dx /= len; dy /= len;
 
-            hbullets[i].spawn(sx, sy, dx, dy, speed, ttl);
+            playerProjectiles[i].spawn(sx, sy, dx, dy, speed, ttl);
             // ✅ 染色：AOE 子弹为“洋红/紫色”
-            hbullets[i].r = 255; hbullets[i].g = 50; hbullets[i].b = 200;
-            hbullets[i].damage = (dmg > 0 ? dmg : 1);
-            hbullets[i].isAOE = true;
+            playerProjectiles[i].r = 255; playerProjectiles[i].g = 50; playerProjectiles[i].b = 200;
+            playerProjectiles[i].damage = (dmg > 0 ? dmg : 1);
+            playerProjectiles[i].isAOE = true;
             return;
         }
     }

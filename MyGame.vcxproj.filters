@@ -130,6 +130,9 @@
     <ClInclude Include="PickupSystem.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="SaveLoad.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
@@ -142,6 +145,9 @@
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="NPCSystem.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="SaveLoad.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>

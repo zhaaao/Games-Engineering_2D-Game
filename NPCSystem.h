@@ -7,7 +7,7 @@ using namespace GamesEngineeringBase;
 class Player;
 
 /*********************  敌方子弹（固定容量池，不用 STL）  *********************/
-struct EnemyBullet
+struct EnemyProjectile
 {
     bool  alive = false;
     float x = 0.f, y = 0.f;     // 世界坐标（左上角）
@@ -36,7 +36,7 @@ struct EnemyBullet
 };
 
 /*********************  英雄子弹（固定容量池，不用 STL）  *********************/
-struct HeroBullet
+struct PlayerProjectile
 {
     bool  alive = false;
     float x = 0.f, y = 0.f;     // 世界坐标（左上/中心影响不大，统一即可）
@@ -58,26 +58,28 @@ struct HeroBullet
  * - 生成：相机外环带；频率随时间线性加快（封顶）
  * - 更新：追踪玩家；NPC 可穿越水（保持你现有差异）
  ******************************************************************************/
-class NPCSystem
+class EnemyManager
 {
 public:
     static const int MAX = 128;
     static const int BULLET_MAX = 256;
+
+    bool isInfiniteWorld = false;
 private:
-    NPC npcs[MAX];
-    TileMap* map = nullptr;
-    float elapsed = 0.f;      // 累计时间
-    float spawnTimer = 0.f;   // 生成计时
+    NPC enemies[MAX];
+    TileMap* tileMap = nullptr;
+    float elapsedSeconds = 0.f;      // 累计时间
+    float spawnAccumulator = 0.f;   // 生成计时
     // ----------------- 子弹池 -----------------
-    EnemyBullet bullets[BULLET_MAX];
-    static const int HERO_BULLET_MAX = 256;
-    HeroBullet hbullets[HERO_BULLET_MAX];
+    EnemyProjectile enemyProjectiles [BULLET_MAX];
+    static const int kPlayerProjectileCapacity = 256;
+    PlayerProjectile playerProjectiles [kPlayerProjectileCapacity];
     // 世界尺寸缓存（像素）
-    int worldWpx = 0, worldHpx = 0;
+    int worldWidthPx = 0, worldHeightPx = 0;
     // 频率参数（与你现有一致）
-    static constexpr float SPAWN_BASE_INTERVAL = 1.6f;
-    static constexpr float SPAWN_MIN_INTERVAL = 0.35f;
-    static constexpr float SPAWN_ACCEL_PER_SEC = 0.02f;
+    static constexpr float kSpawnBaseInterval = 1.6f;
+    static constexpr float kSpawnMinInterval = 0.35f;
+    static constexpr float kSpawnAccelPerSec = 0.02f;
 
     // 简单双精随机与夹紧
     static float frand01() { return (float)rand() / (float)RAND_MAX; }
@@ -136,8 +138,8 @@ public:
     void checkPlayerCollision(Player& hero);
 
     // 若你后续做碰撞/查询，可提供一个只读指针
-    const NPC* getArray() const { return npcs; }
-    NPC* getArray() { return npcs; }
+    const NPC* getArray() const { return enemies; }
+    NPC* getArray() { return enemies; }
 
     // —— O(N) 线性近邻：找到最近的存活 NPC，返回其“中心点” ——
 // 输入 (px,py) 通常是英雄中心；输出 (tx,ty) 是 NPC 中心
@@ -148,7 +150,7 @@ public:
     void updateBullets(float dt);
 
     // —— 敌方子弹命中英雄：击退 + 销毁 —— 
-    void checkBulletHitHero(Player& hero);
+    void checkHeroHit(Player& hero);
 
     // —— 敌方子弹绘制 —— 
     void drawBullets(Window& win, float camX, float camY);
@@ -164,8 +166,13 @@ public:
 
     // 命中检测：英雄子弹 vs NPC（命中即扣血/击杀）；返回“击杀数”
     // 若你已有 NPC 的 hp/kill() 接口，直接调用；否则可先做“命中即移除”
-    int checkHeroBulletsHitNPC();
+    int checkNPCHit();
 
     int  aoeStrikeTopN(int N, int damage, float heroCx, float heroCy);
     void spawnAoeBullet(float sx, float sy, float tx, float ty, float speed, float ttl, int dmg);
+
+    void setInfinite(bool v) { isInfiniteWorld = v; }
+
+    
+
 };

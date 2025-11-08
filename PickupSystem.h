@@ -27,7 +27,7 @@ struct Pickup {
 class PickupSystem {
 public:
     static const int MAX = 32;
-
+    bool infiniteWorld = false;
 private:
     Pickup items[MAX];
     TileMap* map = nullptr;
@@ -90,12 +90,43 @@ public:
     }
 
     // 每帧尝试生成
-    void trySpawn(float dt) {
+    void trySpawn(float dt, float camX, float camY) {
         spawnTimer += dt;
         if (spawnTimer >= nextInterval) {
             spawnTimer -= nextInterval;
             resetInterval();
-            spawnOne();
+            if (infiniteWorld) spawnOneAroundCamera(camX, camY);
+            else               spawnOne(); // 原有：在基底地图内随机
+        }
+    }
+
+    void spawnOneAroundCamera(float camX, float camY) {
+        if (!map) return;
+        int idx = allocIndex(); if (idx < 0) return;
+
+        const int tw = map->getTileW();
+        const int th = map->getTileH();
+
+        // 以相机中心为参考，取一个“视野外环”的瓦片范围
+        // 例如：横向±(屏宽/32 + 6)格、纵向±(屏高/32 + 6)格
+        // 这里我们不直接拿屏幕尺寸，取一个固定圈也行
+        const int ring = 20; // 视野外大约20格内随机
+        int baseTx = (int)std::floor((camX) / tw);
+        int baseTy = (int)std::floor((camY) / th);
+
+        for (int tries = 0; tries < 64; ++tries) {
+            int tx = baseTx + (int)((frand01() * 2 - 1) * ring);
+            int ty = baseTy + (int)((frand01() * 2 - 1) * ring);
+
+            // 判断阻挡：用 TileMap::get(tx, ty)（wrap=true 时会自动取模）
+            if (!map->isBlockedAt(tx, ty)) {
+                float cx = tx * tw + tw * 0.5f;
+                float cy = ty * th + th * 0.5f;
+                items[idx].x = cx - items[idx].w * 0.5f;
+                items[idx].y = cy - items[idx].h * 0.5f;
+                items[idx].alive = true;
+                return;
+            }
         }
     }
 
@@ -172,5 +203,7 @@ public:
             }
         }
     }
+
+    void setInfinite(bool v) { infiniteWorld = v; }
 };
 

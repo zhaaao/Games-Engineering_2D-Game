@@ -2,6 +2,25 @@
 #include "GamesEngineeringBase.h"
 using namespace GamesEngineeringBase;
 
+
+// ===== 前向声明：让 friend 能看到函数签名 =====
+class Player;
+class EnemyManager;
+namespace SaveLoad {
+    bool SaveToFile(const char* path,
+        const Player& hero,
+        const EnemyManager& npcs,
+        float totalTime,
+        int totalKills,
+        bool infiniteMode);
+    bool LoadFromFile(const char* path,
+        Player& hero,
+        EnemyManager& npcs,
+        float& totalTime,
+        int& totalKills,
+        bool& infiniteMode);
+}
+
 /***************************  NPC 类（单个个体）  ****************************
  * - 仅负责自己的数据、更新与绘制；池管理交给 NPCSystem
  * - 不使用 STL；尺寸为简单矩形（w,h）
@@ -32,7 +51,7 @@ private:
     }
 
 public:
-    friend class NPCSystem;
+    friend class EnemyManager;
     // === 生命周期 ===
     void kill() { alive = false; }
     bool isAlive()const { return alive; }
@@ -140,5 +159,7 @@ public:
     float getFireCD() const { return fireCD; }
     void  setFireCD(float v) { fireCD = v; }
     int   getHP() const { return hp; }
-    
+    // ✅ 允许 SaveLoad 模块访问私有字段
+    friend bool SaveLoad::SaveToFile(const char*, const Player&, const EnemyManager&, float, int, bool);
+    friend bool SaveLoad::LoadFromFile(const char*, Player&, EnemyManager&, float&, int&, bool&);
 };

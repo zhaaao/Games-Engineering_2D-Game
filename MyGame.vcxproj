@@ -162,6 +162,7 @@
     <ClInclude Include="NPCSystem.h" />
     <ClInclude Include="PickupSystem.h" />
     <ClInclude Include="Player.h" />
+    <ClInclude Include="SaveLoad.h" />
     <ClInclude Include="SpriteSheet.h" />
     <ClInclude Include="TileMap.h" />
   </ItemGroup>
@@ -174,6 +175,7 @@
     <ClCompile Include="gfx_utils.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="NPCSystem.cpp" />
+    <ClCompile Include="SaveLoad.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

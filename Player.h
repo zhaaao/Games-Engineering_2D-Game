@@ -247,7 +247,7 @@ public:
 
     // —— 每帧：自动攻击（找最近NPC并请求 NPCSystem 生成子弹）——
     // 说明：不改你原有 update() 签名，攻击独立在此处调用
-    void updateAttack(float dt, class NPCSystem& npcs)
+    void updateAttack(float dt, class EnemyManager& npcs)
     {
         // 冷却计时
         if (shootCD > 0.f) { shootCD -= dt; return; }
@@ -278,7 +278,7 @@ public:
         if (interval > 0.f) aoeInterval = interval;
     }
 
-    void updateAOE(float dt, NPCSystem& npcs, Window& input)
+    void updateAOE(float dt, EnemyManager& npcs, Window& input)
     {
         if (aoeCD > 0.f) aoeCD -= dt;
 

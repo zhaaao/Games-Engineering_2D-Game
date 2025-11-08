@@ -18,7 +18,7 @@ private:
     static const int MAX_TILE_ID = 1024;   // 够用即可，可根据需要调大
     GamesEngineeringBase::Image* tileImg[MAX_TILE_ID];
     char folder[260]; // 资源目录（例如 "./tiles/"）
-
+    bool wrap = false;
     // 初始化缓存为空
     void initCache() {
         for (int i = 0; i < MAX_TILE_ID; ++i) tileImg[i] = nullptr;
@@ -101,6 +101,9 @@ public:
     int getWidth() const { return width; }   // 地图列数（水平瓦片数）
     int getHeight() const { return height; } // 地图行数（垂直瓦片数）
 
+    void setWrap(bool v) { wrap = v; }
+    bool isWrap() const { return wrap; }
+
     // 构造 & 析构
     TileMap() { initCache(); }
     ~TileMap() {
@@ -151,9 +154,19 @@ public:
     // 获取 tile id
     int get(int x, int y) const {
         if (!data) return -1;
-        if (x < 0 || y < 0 || x >= width || y >= height) return -1;
-        return data[y * width + x];
+        if (!wrap) {
+            if (x < 0 || y < 0 || x >= width || y >= height) return -1;
+            return data[y * width + x];
+        }
+        else {
+            // 数学取模，允许负坐标
+            if (width <= 0 || height <= 0) return -1;
+            int wx = x % width;  if (wx < 0) wx += width;
+            int wy = y % height; if (wy < 0) wy += height;
+            return data[wy * width + wx];
+        }
     }
+
 
     // 绘制地图
     void draw(Window& window, float camX, float camY) {
