@@ -178,7 +178,7 @@ int main()
             if (fpsCalc > 240.0) fpsCalc = 240.0; // clip visual noise
             fpsDisplay = (int)(fpsCalc + 0.5);
         }
-
+         
         // Input / exit
         canvas.checkInput();
         if (canvas.keyPressed(VK_ESCAPE)) break;
