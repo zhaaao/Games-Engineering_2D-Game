@@ -5,19 +5,23 @@
 
 using namespace GamesEngineeringBase;
 
-/************************  增益果实（随机刷新，拾取即生效） ************************
- * - 不用 STL，固定容量池
- * - 刷新间隔 7~11 秒，随机挑选“非阻挡”瓦片的中心投放
- * - 英雄触碰后：自动射速↑（冷却更短） + AOE 数量 +1（并略缩短 AOE 冷却）
- *******************************************************************************/
+/************************  Pickup System  ************************
+ * Randomly spawns collectible “buff fruits” on non-blocking tiles.
+ * Player gains permanent bonuses when touching a fruit.
+ *
+ *  - Uses a fixed-size pool instead of STL containers.
+ *  - Respawn interval varies between 7–11 seconds.
+ *  - Spawns at the center of a random non-blocking tile.
+ *  - On pickup: increases fire rate and AOE count,
+ *    slightly reduces AOE cooldown.
+ *****************************************************************/
 struct Pickup {
     bool  alive = false;
-    float x = 0.f, y = 0.f;  // 世界坐标（左上）
-    int   w = 12, h = 12;    // 大小
-    // 简单颜色：亮绿色
-    unsigned char r = 60, g = 240, b = 100;
+    float x = 0.f, y = 0.f;     // World-space top-left position
+    int   w = 12, h = 12;       // Size in pixels
+    unsigned char r = 60, g = 240, b = 100; // Simple bright-green tint
 
-    // AABB
+    // Axis-Aligned Bounding Box (AABB)
     float getHitboxX() const { return x; }
     float getHitboxY() const { return y; }
     int   getHitboxW() const { return w; }
@@ -26,44 +30,43 @@ struct Pickup {
 
 class PickupSystem {
 public:
-    static const int MAX = 32;
-    bool infiniteWorld = false;
+    static const int MAX = 32;      // Fixed pool size
+    bool infiniteWorld = false;     // Infinite map mode flag
 private:
     Pickup items[MAX];
     TileMap* map = nullptr;
-    float spawnTimer = 0.f;         // 计时器
-    float nextInterval = 8.0f;      // 下一次刷新的间隔（秒）
-    // 简单随机
+    float spawnTimer = 0.f;         // Time accumulator for spawn logic
+    float nextInterval = 8.0f;      // Time until next spawn
     static float frand01() { return (float)rand() / (float)RAND_MAX; }
 
-    // AABB 判交
+    // Basic AABB overlap test
     static inline bool aabbOverlap(float ax, float ay, int aw, int ah,
         float bx, float by, int bw, int bh) {
         return !(ax + aw <= bx || bx + bw <= ax || ay + ah <= by || by + bh <= ay);
     }
 
-    // 找空位
+    // Finds an unused pickup slot
     int allocIndex() {
         for (int i = 0; i < MAX; ++i) if (!items[i].alive) return i;
         return -1;
     }
 
-    // 随机在“非阻挡瓦片”上投放
+    // Spawns one pickup at a random non-blocking tile
     void spawnOne() {
         if (!map) return;
-        int idx = allocIndex(); if (idx < 0) return;
+        int idx = allocIndex();
+        if (idx < 0) return;
 
         const int mw = map->getWidth();
         const int mh = map->getHeight();
         const int tw = map->getTileW();
         const int th = map->getTileH();
 
-        // 尝试最多 64 次找到一个非阻挡格
+        // Attempts up to 64 random positions
         for (int tries = 0; tries < 64; ++tries) {
             int tx = (int)(frand01() * mw);
             int ty = (int)(frand01() * mh);
             if (!map->isBlockedAt(tx, ty)) {
-                // 放在该瓦片中心
                 float cx = tx * tw + tw * 0.5f;
                 float cy = ty * th + th * 0.5f;
                 items[idx].x = cx - items[idx].w * 0.5f;
@@ -72,53 +75,50 @@ private:
                 return;
             }
         }
-        // 没找到就放弃本次（地图全阻挡的极端情况）
+        // No valid tile found; skip this cycle
     }
 
-    // 刷新“下一次间隔”
+    // Resets next spawn interval between 7–11 seconds
     void resetInterval() {
-        // 7~11 秒之间
         nextInterval = 7.0f + 4.0f * frand01();
     }
 
 public:
+    // Initializes the system
     void init(TileMap* m) {
-        map = m; spawnTimer = 0.f;
+        map = m;
+        spawnTimer = 0.f;
         for (int i = 0; i < MAX; ++i) items[i].alive = false;
         srand(24680);
         resetInterval();
     }
 
-    // 每帧尝试生成
+    // Periodically spawns a pickup based on accumulated delta time
     void trySpawn(float dt, float camX, float camY) {
         spawnTimer += dt;
         if (spawnTimer >= nextInterval) {
             spawnTimer -= nextInterval;
             resetInterval();
             if (infiniteWorld) spawnOneAroundCamera(camX, camY);
-            else               spawnOne(); // 原有：在基底地图内随机
+            else               spawnOne();
         }
     }
 
+    // Spawns near the camera position for infinite maps
     void spawnOneAroundCamera(float camX, float camY) {
         if (!map) return;
-        int idx = allocIndex(); if (idx < 0) return;
+        int idx = allocIndex();
+        if (idx < 0) return;
 
         const int tw = map->getTileW();
         const int th = map->getTileH();
-
-        // 以相机中心为参考，取一个“视野外环”的瓦片范围
-        // 例如：横向±(屏宽/32 + 6)格、纵向±(屏高/32 + 6)格
-        // 这里我们不直接拿屏幕尺寸，取一个固定圈也行
-        const int ring = 20; // 视野外大约20格内随机
-        int baseTx = (int)std::floor((camX) / tw);
-        int baseTy = (int)std::floor((camY) / th);
+        const int ring = 20; // Random range around camera in tiles
+        int baseTx = (int)std::floor(camX / tw);
+        int baseTy = (int)std::floor(camY / th);
 
         for (int tries = 0; tries < 64; ++tries) {
             int tx = baseTx + (int)((frand01() * 2 - 1) * ring);
             int ty = baseTy + (int)((frand01() * 2 - 1) * ring);
-
-            // 判断阻挡：用 TileMap::get(tx, ty)（wrap=true 时会自动取模）
             if (!map->isBlockedAt(tx, ty)) {
                 float cx = tx * tw + tw * 0.5f;
                 float cy = ty * th + th * 0.5f;
@@ -130,10 +130,13 @@ public:
         }
     }
 
-    // 英雄碰到则应用增益并移除
-    // 增益规则：
-    //  - 自动射速：cooldown *= 0.85（至少 0.18s）
-    //  - AOE 数量：+1；AOE 冷却 *= 0.9（最多缩到 0.5s）
+    // Checks for collisions between player and active pickups.
+    // When collected, applies buffs and removes the pickup.
+    //
+    // Buff rules:
+    //  - Fire rate: cooldown *= 0.85 (minimum 0.18s)
+    //  - AOE count: +1
+    //  - AOE cooldown *= 0.9 (minimum 0.5s)
     void updateAndCollide(Player& hero) {
         float hx = hero.getHitboxX();
         float hy = hero.getHitboxY();
@@ -146,31 +149,28 @@ public:
                 items[i].getHitboxW(), items[i].getHitboxH(),
                 hx, hy, hw, hh)) {
 
-                // —— 应用增益 —— 
-                // 自动射速
+                // Apply buffs
                 float shoot = hero.getShootInterval();
                 shoot *= 0.85f;
                 if (shoot < 0.18f) shoot = 0.18f;
                 hero.setShootInterval(shoot);
 
-                // AOE：+1 且略缩短冷却
                 int   n = hero.getAOEN();
                 float acd = hero.getAOEInterval();
                 n += 1;
                 acd *= 0.90f;
                 if (acd < 0.50f) acd = 0.50f;
-                hero.setAOEParams(n, /*dmg*/2, acd);
+                hero.setAOEParams(n, 2, acd);
 
                 items[i].alive = false;
 
-                // 控制台提示（方便作业展示）
                 printf("[BUFF] Fruit picked: shootCD=%.2fs, AOE N=%d, AOE CD=%.2fs\n",
                     shoot, n, acd);
             }
         }
     }
 
-    // 绘制（相机左上 -> 屏幕坐标）
+    // Renders all visible pickups in the current camera view
     void draw(Window& win, float camX, float camY) {
         const int W = (int)win.getWidth();
         const int H = (int)win.getHeight();
@@ -182,6 +182,7 @@ public:
             int sy = (int)(items[i].y - camY);
             int w = items[i].w, h = items[i].h;
 
+            // Skip if completely outside viewport
             if (sx + w < 0 || sy + h < 0 || sx >= W || sy >= H) continue;
 
             int x0 = sx < 0 ? 0 : sx;
@@ -189,6 +190,7 @@ public:
             int x1 = sx + w; if (x1 > W) x1 = W;
             int y1 = sy + h; if (y1 > H) y1 = H;
 
+            // Draw colored rectangle
             for (int y = y0; y < y1; ++y) {
                 int base = y * W;
                 for (int x = x0; x < x1; ++x) {
@@ -196,7 +198,7 @@ public:
                 }
             }
 
-            // 简单“高光”点缀
+            // Add a small highlight pixel at the center
             int cx = sx + w / 2, cy = sy + h / 2;
             if (cx >= 0 && cx < W && cy >= 0 && cy < H) {
                 win.draw(cy * W + cx, 255, 255, 255);
@@ -206,4 +208,3 @@ public:
 
     void setInfinite(bool v) { infiniteWorld = v; }
 };
-

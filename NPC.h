@@ -3,7 +3,7 @@
 using namespace GamesEngineeringBase;
 
 
-// ===== 前向声明：让 friend 能看到函数签名 =====
+// Forward declarations so friend functions can see the exact signatures
 class Player;
 class EnemyManager;
 namespace SaveLoad {
@@ -21,27 +21,39 @@ namespace SaveLoad {
         bool& infiniteMode);
 }
 
-/***************************  NPC 类（单个个体）  ****************************
- * - 仅负责自己的数据、更新与绘制；池管理交给 NPCSystem
- * - 不使用 STL；尺寸为简单矩形（w,h）
- ******************************************************************************/
+/************************************  NPC  ************************************
+ * Single enemy unit. Owns its state, update, and draw; lifetime and pooling are
+ * handled externally by EnemyManager (no STL usage here). Rectangle hitbox (w,h).
+ *******************************************************************************/
 class NPC
 {
 public:
-    // 0=追踪；1=炮台（静止，后续可扩展发射子弹）
+    // Types: 0 = chaser, 1 = turret (static, fire handled by system), 
+    //        2 = light/fast, 3 = heavy/slow
     unsigned char type = 0;
     bool  alive = false;
-    // --- Turret (type==1) 专用的简单发射冷却（秒） ---
-    float fireCD = 0.0f;   // 倒计时到 0 即可发射；由 NPCSystem 更新与重置
+
+    // Simple cooldown for turret behavior. Counted down by the system;
+    // when <= 0 the turret may fire and the system resets it.
+    float fireCD = 0.0f;
 
 private:
-    float x = 0.f, y = 0.f;   // 世界坐标（左上角）
-    float vx = 0.f, vy = 0.f; // 朝向单位向量
-    float speed = 0.f;        // 像素/秒
-    int   w = 24, h = 24;     // 矩形尺寸
-    int   hp = 3;             // 预留
+    // World-space top-left position
+    float x = 0.f, y = 0.f;
 
-    // 工具：单位化
+    // Normalized facing / movement direction
+    float vx = 0.f, vy = 0.f;
+
+    // Speed in pixels per second
+    float speed = 0.f;
+
+    // Axis-aligned rectangle size
+    int   w = 24, h = 24;
+
+    // Optional health; levels that ignore HP still allow forced kill()
+    int   hp = 3;
+
+    // Produce a unit vector from (dx,dy); returns (0,0) for near-zero length
     static void unitVector(float dx, float dy, float& ox, float& oy)
     {
         float len2 = dx * dx + dy * dy;
@@ -52,33 +64,36 @@ private:
 
 public:
     friend class EnemyManager;
-    // === 生命周期 ===
-    void kill() { alive = false; }
-    bool isAlive()const { return alive; }
 
-    // === 只在生成时调用：一次性初始化 ===
+    // ---- Lifetime control ----
+    void kill() { alive = false; }
+    bool isAlive() const { return alive; }
+
+    // ---- One-shot spawn initialization ----
+    // Sets position, type, base speed, and initial facing toward a target point.
     void initSpawn(float sx, float sy, unsigned char _type, float _speed, float faceTx, float faceTy)
     {
         x = sx; y = sy; type = _type; speed = _speed; alive = true; hp = 3;
-        unitVector(faceTx - x, faceTy - y, vx, vy); // 初始朝向面对玩家
+        unitVector(faceTx - x, faceTy - y, vx, vy); // face player on spawn
     }
 
-    // === 帧更新 ===
-    // worldW/worldH：像素世界边界，用于夹紧
+    // ---- Per-frame update ----
+    // For non-turret types, steer smoothly toward target and move.
+    // Clamps position inside [0, worldW-w] × [0, worldH-h].
     void update(float dt, float targetX, float targetY, int worldW, int worldH)
     {
         if (!alive) return;
 
-        // 非炮台（type != 1）都要移动追踪玩家
-        if (type != 1) {
-            // 按类型给不同的“转向灵敏度”：
-            // 轻型(2)更灵活，坦克(3)更迟钝，普通追踪(0)居中
+        if (type != 1) { // move if not a turret
+            // Steering sensitivity per type:
+            // fast(2) turns quicker; heavy(3) turns slower; chaser(0) is in-between
             float steer = (type == 2 ? 0.35f : (type == 3 ? 0.15f : 0.20f));
             float inertia = 1.0f - steer;
 
             float ux, uy;
             unitVector(targetX - x, targetY - y, ux, uy);
-            // 指向目标的平滑转向
+
+            // Exponential smoothing toward target direction, then renormalize
             vx = inertia * vx + steer * ux;
             vy = inertia * vy + steer * uy;
             unitVector(vx, vy, vx, vy);
@@ -86,38 +101,35 @@ public:
             x += vx * speed * dt;
             y += vy * speed * dt;
         }
-        // type == 1 炮台：保持静止，仅在系统里发射子弹
+        // type == 1 (turret) remains stationary; firing handled by system
 
-        // 边界夹紧
+        // Clamp inside world bounds
         if (x < 0) x = 0; if (y < 0) y = 0;
         if (x > worldW - w) x = (float)(worldW - w);
         if (y > worldH - h) y = (float)(worldH - h);
 
-        // 预留：hp<=0 时 kill()
+        // Optional: if hp <= 0, kill(); handled elsewhere or by applyDamage()
     }
 
-    // === 绘制（相机左上 -> 屏幕坐标） ===
+    // ---- Rendering (camera top-left to screen space) ----
     void draw(Window& win, float camX, float camY)
     {
         if (!alive) return;
         const int W = (int)win.getWidth(), H = (int)win.getHeight();
+
         int sx = (int)(x - camX);
         int sy = (int)(y - camY);
         if (sx + w < 0 || sy + h < 0 || sx >= W || sy >= H) return;
 
+        // Color per type for quick visual identification
         unsigned char r = 255, g = 0, b = 0;
         switch (type)
         {
-        case 0: // 追踪：红
-            r = 255; g = 60;  b = 60;  break;
-        case 1: // 炮台：紫
-            r = 180; g = 0;   b = 255; break;
-        case 2: // 轻型冲锋：青绿
-            r = 40;  g = 230; b = 200; break;
-        case 3: // 重装坦克：橙
-            r = 255; g = 150; b = 40;  break;
-        default:
-            r = 255; g = 0;   b = 0;   break;
+        case 0: r = 255; g = 60;  b = 60;  break; // chaser
+        case 1: r = 180; g = 0;   b = 255; break; // turret
+        case 2: r = 40;  g = 230; b = 200; break; // light/fast
+        case 3: r = 255; g = 150; b = 40;  break; // heavy
+        default: r = 255; g = 0;  b = 0;   break;
         }
 
         for (int yy = 0; yy < h; ++yy) {
@@ -130,36 +142,40 @@ public:
         }
     }
 
+    // Apply damage and handle death
     void applyDamage(int dmg) {
         if (!alive || dmg <= 0) return;
         if (hp > 0) {
             hp -= dmg;
-            if (hp <= 0) { kill(); }
+            if (hp <= 0) kill();
         }
         else {
-            // 若没有使用 hp 的关卡，也保证能被击杀
+            // If HP is not used by the level, still allow forced kill
             kill();
         }
     }
 
-    // === 只读访问（可用于碰撞等扩展） ===
-    float getX()const { return x; }
-    float getY()const { return y; }
-    int   getW()const { return w; }
-    int   getH()const { return h; }
-    // 命名统一的碰撞盒访问（与 Player 命名对齐）
+    // ---- Read-only accessors (useful for collisions, etc.) ----
+    float getX() const { return x; }
+    float getY() const { return y; }
+    int   getW() const { return w; }
+    int   getH() const { return h; }
+
+    // Unified hitbox access (aligned with Player naming)
     float getHitboxX() const { return x; }
     float getHitboxY() const { return y; }
     int   getHitboxW() const { return w; }
     int   getHitboxH() const { return h; }
-    // --- 放到 NPC.h, class NPC 的 public 区域 ---
+
+    // Type and simple attributes exposed for systems and serialization
     int   getType() const { return type; }
-    void  setType(int t) { type = t; }
+    void  setType(int t) { type = (unsigned char)t; }
 
     float getFireCD() const { return fireCD; }
     void  setFireCD(float v) { fireCD = v; }
     int   getHP() const { return hp; }
-    // ✅ 允许 SaveLoad 模块访问私有字段
+
+    // Allow SaveLoad to serialize/deserialize private fields safely
     friend bool SaveLoad::SaveToFile(const char*, const Player&, const EnemyManager&, float, int, bool);
     friend bool SaveLoad::LoadFromFile(const char*, Player&, EnemyManager&, float&, int&, bool&);
 };
